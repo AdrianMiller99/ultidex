@@ -125,7 +125,7 @@ export function LandingPage() {
               <input
                 name="pokemon"
                 autoComplete="off"
-                placeholder="Search Pokemon in your language or by National Dex #"
+                placeholder="Search Pokemon"
                 aria-label="Pokemon search"
               />
               <button type="submit">Search</button>
