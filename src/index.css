@@ -1456,45 +1456,174 @@ select {
 }
 
 @media (max-width: 760px) {
-  .landing-search,
-  .header-search {
+  .app-shell {
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
+  }
+
+  .site-header {
     grid-template-columns: 1fr;
+    height: auto;
+    min-height: 0;
+    gap: 0.45rem;
+    padding: 0.62rem 0.72rem;
   }
 
-  .landing-preview-grid {
-    min-height: auto;
-    grid-template-columns: 1fr;
-    grid-template-areas:
-      "summary"
-      "stats"
-      "abilities"
-      "evolution"
-      "effectiveness"
-      "moves";
+  .brand-link {
+    font-size: 0.98rem;
   }
 
-  .pokemon-page.page-content {
-    overflow: auto;
+  .header-search,
+  .landing-search {
+    grid-template-columns: 1fr auto;
+    gap: 0.42rem;
   }
 
-  .landing-card-summary,
-  .landing-card-stats,
-  .landing-card-abilities,
-  .landing-card-evolution,
-  .landing-card-effectiveness,
-  .landing-card-moves {
-    min-height: 250px;
+  .header-search input,
+  .landing-search input {
+    padding: 0.62rem 0.68rem;
+    border-radius: 10px;
+    font-size: 0.88rem;
+  }
+
+  .theme-toggle,
+  .generation-select select,
+  .header-search button,
+  .landing-search button,
+  .shiny-toggle {
+    border-radius: 9px;
+    padding: 0.42rem 0.58rem;
+    font-size: 0.82rem;
   }
 
   .site-header-controls {
-    flex-wrap: wrap;
+    width: 100%;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    justify-self: stretch;
+    gap: 0.42rem;
+    flex-wrap: nowrap;
   }
 
-  .stat-row {
-    grid-template-columns: 68px 1fr auto;
+  .generation-select {
+    min-width: 0;
+    gap: 0.35rem;
+    font-size: 0.78rem;
   }
 
-  .bento-grid {
+  .generation-select span {
+    display: none;
+  }
+
+  .generation-select select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .page-content {
+    padding: 0.62rem;
+    overflow: auto;
+  }
+
+  .ability-tooltip-layer {
+    display: none;
+  }
+
+  .moves-header-toggle,
+  .evo-header-toggle {
+    gap: 0.42rem;
+  }
+
+  .moves-mode-label,
+  .evo-mode-label {
+    font-size: 0.78rem;
+  }
+
+  .moves-mode-switch,
+  .evo-mode-switch {
+    width: 2.42rem;
+    height: 1.4rem;
+    padding: 0.12rem;
+  }
+
+  .moves-mode-thumb,
+  .evo-mode-thumb {
+    width: 1rem;
+    height: 1rem;
+  }
+
+  .moves-mode-switch.is-on .moves-mode-thumb,
+  .evo-mode-switch.is-on .evo-mode-thumb {
+    transform: translateX(0.9rem);
+  }
+
+  .landing-page {
+    padding: 0.62rem;
+  }
+
+  .landing-split {
+    height: auto;
+    grid-template-columns: 1fr;
+    gap: 0.62rem;
+  }
+
+  .landing-copy {
+    padding: 0.86rem;
+    border-radius: 14px;
+  }
+
+  .landing-kicker {
+    font-size: 0.58rem;
+  }
+
+  .landing-copy h1 {
+    font-size: clamp(1.6rem, 9vw, 2.25rem);
+    line-height: 1.03;
+    margin: 0.4rem 0 0.56rem;
+  }
+
+  .landing-copy p {
+    font-size: 0.84rem;
+    max-width: none;
+  }
+
+  .landing-search {
+    margin-top: 0.7rem;
+  }
+
+  .landing-points {
+    margin-top: 0.5rem;
+    gap: 0.26rem;
+  }
+
+  .landing-points span {
+    padding: 0.16rem 0.42rem;
+    font-size: 0.58rem;
+  }
+
+  .landing-preview-pane {
+    border-radius: 14px;
+  }
+
+  .landing-preview-header {
+    padding: 0.5rem 0.6rem;
+    gap: 0.4rem;
+  }
+
+  .landing-preview-header h2 {
+    font-size: 0.84rem;
+  }
+
+  .landing-preview-header span {
+    font-size: 0.64rem;
+  }
+
+  .landing-preview-grid {
+    min-height: 0;
+    padding: 0.5rem;
+    gap: 0.5rem;
     grid-template-columns: 1fr;
     grid-template-rows: none;
     grid-template-areas:
@@ -1504,15 +1633,241 @@ select {
       "evolution"
       "effectiveness"
       "moves";
-    gap: 0.75rem;
   }
 
-  .card-summary,
+  .landing-preview-pane .bento-card {
+    border-radius: 14px;
+  }
+
+  .landing-preview-pane .bento-card-header {
+    padding: 0.56rem 0.62rem;
+    gap: 0.42rem;
+  }
+
+  .landing-preview-pane .bento-card-title {
+    font-size: 0.86rem;
+  }
+
+  .landing-preview-pane .bento-card-header span {
+    font-size: 0.68rem;
+  }
+
+  .landing-preview-pane .bento-card-body {
+    padding: 0.56rem 0.62rem 0.62rem;
+    overflow: visible;
+  }
+
+  .landing-preview-pane .pokemon-image {
+    width: min(100%, clamp(110px, 36vw, 170px));
+  }
+
+  .landing-preview-pane .moves-table {
+    font-size: 0.72rem;
+  }
+
+  .landing-preview-pane .moves-table th {
+    font-size: 0.62rem;
+  }
+
+  .landing-preview-pane .moves-table th,
+  .landing-preview-pane .moves-table td {
+    padding: 0.28rem 0.22rem;
+  }
+
+  .landing-card-summary {
+    min-height: 290px;
+  }
+
+  .landing-card-stats,
+  .landing-card-abilities,
+  .landing-card-evolution,
+  .landing-card-effectiveness {
+    min-height: 210px;
+  }
+
+  .landing-card-moves {
+    min-height: 280px;
+  }
+
+  .landing-card-moves .bento-card-body {
+    overflow-x: auto;
+    overflow-y: visible;
+  }
+
+  .pokemon-page {
+    overflow: visible;
+  }
+
+  .pokemon-page.page-content {
+    overflow: auto;
+    padding: 0.62rem;
+  }
+
+  .bento-grid,
+  .pokemon-page .bento-grid {
+    height: auto;
+    min-height: 0;
+    grid-template-columns: 1fr;
+    grid-template-rows: none;
+    grid-template-areas:
+      "summary"
+      "stats"
+      "abilities"
+      "evolution"
+      "effectiveness"
+      "moves";
+    gap: 0.62rem;
+  }
+
+  .bento-card {
+    border-radius: 14px;
+  }
+
+  .bento-card-header {
+    padding: 0.56rem 0.62rem;
+    gap: 0.45rem;
+    flex-wrap: wrap;
+  }
+
+  .bento-card-title {
+    font-size: 0.9rem;
+  }
+
+  .bento-card-header span {
+    font-size: 0.7rem;
+  }
+
+  .bento-card-body {
+    padding: 0.58rem 0.62rem 0.66rem;
+    overflow: visible;
+  }
+
+  .summary-card {
+    gap: 0.62rem;
+  }
+
+  .pokemon-image {
+    width: min(100%, clamp(112px, 36vw, 180px));
+  }
+
+  .summary-meta {
+    gap: 0.52rem;
+  }
+
+  .summary-meta h3 {
+    font-size: 1rem;
+  }
+
+  .type-pill {
+    height: 1.54rem;
+    font-size: 0.68rem;
+  }
+
+  .type-pills-sm .type-pill {
+    height: 1.16rem;
+    font-size: 0.56rem;
+  }
+
+  .type-pills-xs .type-pill {
+    height: 1.02rem;
+    font-size: 0.47rem;
+  }
+
+  .stat-row {
+    grid-template-columns: 58px 1fr auto;
+    gap: 0.34rem;
+    font-size: 0.72rem;
+  }
+
+  .ability-list {
+    gap: 0.42rem;
+  }
+
+  .ability-item {
+    padding: 0.42rem 0.5rem;
+    gap: 0.5rem;
+  }
+
+  .ability-item strong {
+    font-size: 0.82rem;
+  }
+
+  .ability-badge {
+    font-size: 0.62rem;
+    padding: 0.14rem 0.28rem;
+  }
+
+  .evolution-tree,
+  .evolution-tree ul {
+    padding-left: 0.78rem;
+  }
+
+  .evolution-item {
+    margin-bottom: 0.44rem;
+    padding: 0.4rem 0.48rem;
+  }
+
+  .evolution-item p {
+    margin-top: 0.26rem;
+    font-size: 0.68rem;
+  }
+
+  .type-matchup-row {
+    grid-template-columns: 30px minmax(0, 1fr);
+    gap: 0.3rem;
+    padding-bottom: 0.16rem;
+  }
+
+  .type-matchup-label,
+  .type-matchup-empty {
+    font-size: 0.64rem;
+  }
+
+  .moves-table {
+    font-size: 0.72rem;
+  }
+
+  .moves-table th {
+    font-size: 0.64rem;
+  }
+
+  .moves-table th,
+  .moves-table td {
+    padding: 0.28rem 0.22rem;
+  }
+
+  .card-summary {
+    min-height: 300px;
+  }
+
   .card-stats,
   .card-abilities,
   .card-evolution,
-  .card-effectiveness,
+  .card-effectiveness {
+    min-height: 210px;
+  }
+
   .card-moves {
-    min-height: 250px;
+    min-height: 320px;
+  }
+
+  .card-moves .bento-card-body {
+    overflow-x: auto;
+    overflow-y: visible;
+  }
+}
+
+@media (max-width: 460px) {
+  .site-header-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .header-search,
+  .landing-search {
+    grid-template-columns: 1fr;
+  }
+
+  .theme-toggle {
+    width: 100%;
   }
 }

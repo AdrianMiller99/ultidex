@@ -103,7 +103,7 @@ export function LandingPage() {
         <section className="landing-split">
           <section className="landing-copy">
             <p className="landing-kicker">Ultimate Pokedex</p>
-            <h1>Know every Pokemon in one view.</h1>
+            <h1>One view.<br />One Pokemon.<br />All the stats.</h1>
             <p>
               Search by name or number, compare movesets by generation, inspect evolutions, forms, type matchups, and base
               stats instantly.

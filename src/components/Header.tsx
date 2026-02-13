@@ -27,7 +27,7 @@ export function Header({ showSearch = false }: HeaderProps) {
     <header className="site-header">
       <div className="site-header-left">
         <Link to="/" className="brand-link">
-          Ultimate Pokedex
+          UltiDex
         </Link>
       </div>
 
