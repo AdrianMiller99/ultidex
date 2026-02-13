@@ -7,6 +7,7 @@ import type {
 } from "../types/pokemon";
 
 const API_BASE = "https://pokeapi.co/api/v2";
+const SPECIES_NAMES_CSV_URL = "https://raw.githubusercontent.com/PokeAPI/pokeapi/master/data/v2/csv/pokemon_species_names.csv";
 
 interface NamedAPIResource {
   name: string;
@@ -103,6 +104,9 @@ interface SpeciesEvolutionInfo {
 }
 
 const moveMetadataCache = new Map<string, MoveMetadata>();
+const localizedNameToSpeciesIds = new Map<string, number[]>();
+const normalizedLocalizedNameToSpeciesIds = new Map<string, number[]>();
+let localizedNameIndexPromise: Promise<void> | null = null;
 
 async function fetchJson<T>(pathOrUrl: string): Promise<T> {
   const url = pathOrUrl.startsWith("http") ? pathOrUrl : `${API_BASE}${pathOrUrl}`;
@@ -116,6 +120,129 @@ async function fetchJson<T>(pathOrUrl: string): Promise<T> {
   }
 
   return (await response.json()) as T;
+}
+
+function parseCsvLine(line: string): string[] {
+  const fields: string[] = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i];
+
+    if (char === "\"") {
+      const next = line[i + 1];
+      if (inQuotes && next === "\"") {
+        current += "\"";
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (char === "," && !inQuotes) {
+      fields.push(current);
+      current = "";
+      continue;
+    }
+
+    current += char;
+  }
+
+  fields.push(current);
+  return fields;
+}
+
+function normalizeLocalizedPokemonName(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/\u2640/g, "female")
+    .replace(/\u2642/g, "male")
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
+function addSpeciesIdToAliasMap(map: Map<string, number[]>, alias: string, speciesId: number): void {
+  if (!alias) {
+    return;
+  }
+
+  const existing = map.get(alias);
+  if (!existing) {
+    map.set(alias, [speciesId]);
+    return;
+  }
+
+  if (!existing.includes(speciesId)) {
+    existing.push(speciesId);
+  }
+}
+
+async function ensureLocalizedNameIndex(): Promise<void> {
+  if (localizedNameToSpeciesIds.size > 0 || normalizedLocalizedNameToSpeciesIds.size > 0) {
+    return;
+  }
+
+  if (!localizedNameIndexPromise) {
+    localizedNameIndexPromise = (async () => {
+      const response = await fetch(SPECIES_NAMES_CSV_URL);
+      if (!response.ok) {
+        throw new Error("Could not load multilingual Pokemon names.");
+      }
+
+      const csv = await response.text();
+      const lines = csv.split(/\r?\n/).filter((line) => line.trim().length > 0);
+
+      for (let index = 1; index < lines.length; index += 1) {
+        const fields = parseCsvLine(lines[index]);
+        if (fields.length < 3) {
+          continue;
+        }
+
+        const speciesId = Number(fields[0]);
+        const localizedName = fields[2]?.trim();
+
+        if (!Number.isFinite(speciesId) || !localizedName) {
+          continue;
+        }
+
+        const lowerAlias = localizedName.toLowerCase();
+        addSpeciesIdToAliasMap(localizedNameToSpeciesIds, lowerAlias, speciesId);
+        addSpeciesIdToAliasMap(normalizedLocalizedNameToSpeciesIds, normalizeLocalizedPokemonName(localizedName), speciesId);
+      }
+    })();
+  }
+
+  await localizedNameIndexPromise;
+}
+
+async function resolveSpeciesIdFromLocalizedName(query: string): Promise<number | null> {
+  const trimmed = query.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  await ensureLocalizedNameIndex();
+
+  const direct = localizedNameToSpeciesIds.get(trimmed.toLowerCase());
+  if (direct && direct.length > 0) {
+    return Math.min(...direct);
+  }
+
+  const normalized = normalizeLocalizedPokemonName(trimmed);
+  const normalizedMatch = normalizedLocalizedNameToSpeciesIds.get(normalized);
+  if (normalizedMatch && normalizedMatch.length > 0) {
+    return Math.min(...normalizedMatch);
+  }
+
+  return null;
+}
+
+function isPokemonNotFoundError(error: unknown): boolean {
+  return error instanceof Error && error.message === "Pokemon not found.";
 }
 
 function resolveArtwork(pokemon: RawPokemonResponse): { image: string; shinyImage: string } {
@@ -280,7 +407,7 @@ async function loadMovesMetadata(moves: NamedAPIResource[]): Promise<Record<stri
   );
 }
 
-export async function loadPokemonSource(nameOrId: string): Promise<PokemonSourceData> {
+async function loadPokemonSourceByIdentifier(nameOrId: string): Promise<PokemonSourceData> {
   const pokemon = await fetchJson<RawPokemonResponse>(`/pokemon/${nameOrId.toLowerCase()}`);
   const species = await fetchJson<RawSpeciesResponse>(pokemon.species.url);
   const evolutionChain = await fetchJson<RawEvolutionChainResponse>(species.evolution_chain.url);
@@ -336,6 +463,31 @@ export async function loadPokemonSource(nameOrId: string): Promise<PokemonSource
       .filter((entry) => !entry.is_default)
       .map((entry) => ({ name: entry.pokemon.name })),
   };
+}
+
+export async function loadPokemonSource(nameOrId: string): Promise<PokemonSourceData> {
+  const canonicalIdentifier = nameOrId.toLowerCase();
+
+  try {
+    return await loadPokemonSourceByIdentifier(canonicalIdentifier);
+  } catch (error) {
+    if (!isPokemonNotFoundError(error)) {
+      throw error;
+    }
+
+    let resolvedSpeciesId: number | null = null;
+    try {
+      resolvedSpeciesId = await resolveSpeciesIdFromLocalizedName(nameOrId);
+    } catch {
+      throw error;
+    }
+
+    if (!resolvedSpeciesId || String(resolvedSpeciesId) === canonicalIdentifier) {
+      throw error;
+    }
+
+    return loadPokemonSourceByIdentifier(String(resolvedSpeciesId));
+  }
 }
 
 export function derivePokemonForGeneration(
@@ -414,3 +566,4 @@ export function countEvolutionNodes(root: EvolutionNode | null): number {
 
   return 1 + root.children.reduce((total, child) => total + countEvolutionNodes(child), 0);
 }
+
