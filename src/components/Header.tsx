@@ -27,6 +27,7 @@ export function Header({ showSearch = false }: HeaderProps) {
     <header className="site-header">
       <div className="site-header-left">
         <Link to="/" className="brand-link">
+          <img src="/pokedex_logo.svg" alt="UltiDex logo" className="brand-logo" />
           UltiDex
         </Link>
       </div>

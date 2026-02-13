@@ -75,12 +75,22 @@ select {
 }
 
 .brand-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.46rem;
   font-family: "Sora", "Space Grotesk", sans-serif;
   font-size: 1.1rem;
   letter-spacing: 0.02em;
   font-weight: 700;
   text-decoration: none;
   color: var(--text);
+}
+
+.brand-logo {
+  width: 1.58rem;
+  height: 1.58rem;
+  object-fit: contain;
+  flex: 0 0 auto;
 }
 
 .site-header-controls {
@@ -1472,6 +1482,12 @@ select {
 
   .brand-link {
     font-size: 0.98rem;
+    gap: 0.36rem;
+  }
+
+  .brand-logo {
+    width: 1.34rem;
+    height: 1.34rem;
   }
 
   .header-search,
