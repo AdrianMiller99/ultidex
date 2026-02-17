@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { createPortal } from "react-dom";
 import { countEvolutionNodes, derivePokemonForGeneration, loadPokemonSource } from "../api/pokeapi";
@@ -38,7 +38,118 @@ function resolveEvolutionVariantName(nodeName: string, varieties: string[], suff
   return partialMatch ?? nodeName;
 }
 
+function PokemonPageSkeleton() {
+  return (
+    <section className="bento-grid pokemon-bento-skeleton" aria-hidden="true">
+      <article className="bento-card card-summary">
+        <header className="bento-card-header">
+          <div className="lookup-skeleton-line pokemon-skeleton-header-line" />
+          <div className="lookup-skeleton-line pokemon-skeleton-subtitle-line" />
+        </header>
+        <div className="bento-card-body">
+          <div className="summary-card">
+            <div className="pokemon-image-wrap">
+              <div className="lookup-skeleton-line pokemon-skeleton-image" />
+            </div>
+            <div className="summary-meta">
+              <div className="lookup-skeleton-line pokemon-skeleton-name-line" />
+              <div className="pokemon-skeleton-pill-row">
+                <div className="lookup-skeleton-line pokemon-skeleton-pill" />
+                <div className="lookup-skeleton-line pokemon-skeleton-pill" />
+              </div>
+              <div className="lookup-skeleton-line pokemon-skeleton-button-line" />
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article className="bento-card card-stats">
+        <header className="bento-card-header">
+          <div className="lookup-skeleton-line pokemon-skeleton-header-line" />
+          <div className="lookup-skeleton-line pokemon-skeleton-subtitle-line" />
+        </header>
+        <div className="bento-card-body pokemon-skeleton-list">
+          {Array.from({ length: 6 }).map((_, index) => (
+            <div key={index} className="pokemon-skeleton-stat-row">
+              <div className="lookup-skeleton-line pokemon-skeleton-stat-label" />
+              <div className="lookup-skeleton-line pokemon-skeleton-stat-track" />
+              <div className="lookup-skeleton-line pokemon-skeleton-stat-value" />
+            </div>
+          ))}
+        </div>
+      </article>
+
+      <article className="bento-card card-abilities">
+        <header className="bento-card-header">
+          <div className="lookup-skeleton-line pokemon-skeleton-header-line" />
+          <div className="lookup-skeleton-line pokemon-skeleton-subtitle-line" />
+        </header>
+        <div className="bento-card-body pokemon-skeleton-list">
+          {Array.from({ length: 3 }).map((_, index) => (
+            <div key={index} className="pokemon-skeleton-item">
+              <div className="lookup-skeleton-line pokemon-skeleton-item-main" />
+              <div className="lookup-skeleton-line pokemon-skeleton-item-chip" />
+            </div>
+          ))}
+        </div>
+      </article>
+
+      <article className="bento-card card-evolution">
+        <header className="bento-card-header">
+          <div className="lookup-skeleton-line pokemon-skeleton-header-line" />
+          <div className="lookup-skeleton-line pokemon-skeleton-subtitle-line" />
+        </header>
+        <div className="bento-card-body pokemon-skeleton-list">
+          {Array.from({ length: 3 }).map((_, index) => (
+            <div key={index} className="pokemon-skeleton-evo-item">
+              <div className="lookup-skeleton-line pokemon-skeleton-item-main" />
+              <div className="lookup-skeleton-line pokemon-skeleton-item-secondary" />
+            </div>
+          ))}
+        </div>
+      </article>
+
+      <article className="bento-card card-effectiveness">
+        <header className="bento-card-header">
+          <div className="lookup-skeleton-line pokemon-skeleton-header-line" />
+          <div className="lookup-skeleton-line pokemon-skeleton-subtitle-line" />
+        </header>
+        <div className="bento-card-body pokemon-skeleton-list">
+          {Array.from({ length: 5 }).map((_, index) => (
+            <div key={index} className="pokemon-skeleton-type-row">
+              <div className="lookup-skeleton-line pokemon-skeleton-type-label" />
+              <div className="lookup-skeleton-line pokemon-skeleton-type-pill" />
+            </div>
+          ))}
+        </div>
+      </article>
+
+      <article className="bento-card card-moves">
+        <header className="bento-card-header">
+          <div className="lookup-skeleton-line pokemon-skeleton-header-line wide" />
+          <div className="lookup-skeleton-line pokemon-skeleton-subtitle-line" />
+        </header>
+        <div className="bento-card-body pokemon-skeleton-list">
+          {Array.from({ length: 7 }).map((_, index) => (
+            <div key={index} className="pokemon-skeleton-move-row">
+              <div className="lookup-skeleton-line pokemon-skeleton-cell small" />
+              <div className="lookup-skeleton-line pokemon-skeleton-cell large" />
+              <div className="lookup-skeleton-line pokemon-skeleton-cell medium" />
+              <div className="lookup-skeleton-line pokemon-skeleton-cell medium" />
+              <div className="lookup-skeleton-line pokemon-skeleton-cell small" />
+              <div className="lookup-skeleton-line pokemon-skeleton-cell small" />
+              <div className="lookup-skeleton-line pokemon-skeleton-cell small" />
+            </div>
+          ))}
+        </div>
+      </article>
+    </section>
+  );
+}
+
 export function PokemonPage() {
+  const TOAST_AUTO_HIDE_MS = 5000;
+  const TOAST_EXIT_ANIMATION_MS = 260;
   const navigate = useNavigate();
   const { name = "" } = useParams();
   const { generation } = useAppContext();
@@ -49,6 +160,9 @@ export function PokemonPage() {
   const [showShiny, setShowShiny] = useState(false);
   const [moveMode, setMoveMode] = useState<"level-up" | "machine">("level-up");
   const [evolutionMode, setEvolutionMode] = useState<"evolutions" | "forms">("evolutions");
+  const [generationToast, setGenerationToast] = useState<{ message: string; exiting: boolean } | null>(null);
+  const generationToastAutoHideTimeoutRef = useRef<number | null>(null);
+  const generationToastExitTimeoutRef = useRef<number | null>(null);
   const [selectedFormName, setSelectedFormName] = useState<string | null>(null);
   const [formSources, setFormSources] = useState<Record<string, PokemonSourceData>>({});
   const [formError, setFormError] = useState<string | null>(null);
@@ -76,6 +190,63 @@ export function PokemonPage() {
     }
 
     setAbilityTooltip({ text, top, left });
+  }
+
+  function clearGenerationToastTimers() {
+    if (generationToastAutoHideTimeoutRef.current !== null) {
+      window.clearTimeout(generationToastAutoHideTimeoutRef.current);
+      generationToastAutoHideTimeoutRef.current = null;
+    }
+
+    if (generationToastExitTimeoutRef.current !== null) {
+      window.clearTimeout(generationToastExitTimeoutRef.current);
+      generationToastExitTimeoutRef.current = null;
+    }
+  }
+
+  function dismissGenerationToast(messageToDismiss?: string) {
+    if (generationToastAutoHideTimeoutRef.current !== null) {
+      window.clearTimeout(generationToastAutoHideTimeoutRef.current);
+      generationToastAutoHideTimeoutRef.current = null;
+    }
+
+    setGenerationToast((current) => {
+      if (!current) {
+        return null;
+      }
+
+      if (messageToDismiss && current.message !== messageToDismiss) {
+        return current;
+      }
+
+      if (current.exiting) {
+        return current;
+      }
+
+      return {
+        ...current,
+        exiting: true,
+      };
+    });
+
+    if (generationToastExitTimeoutRef.current !== null) {
+      window.clearTimeout(generationToastExitTimeoutRef.current);
+    }
+
+    generationToastExitTimeoutRef.current = window.setTimeout(() => {
+      setGenerationToast((current) => {
+        if (!current) {
+          return null;
+        }
+
+        if (messageToDismiss && current.message !== messageToDismiss) {
+          return current;
+        }
+
+        return null;
+      });
+      generationToastExitTimeoutRef.current = null;
+    }, TOAST_EXIT_ANIMATION_MS);
   }
 
   useEffect(() => {
@@ -190,23 +361,44 @@ export function PokemonPage() {
     }
   }, [hasAlternativeForms, evolutionMode]);
 
+  useEffect(() => {
+    if (!pokemon || pokemon.isAvailableInGeneration) {
+      clearGenerationToastTimers();
+      setGenerationToast(null);
+      return;
+    }
+
+    const message = `${formatPokemonName(pokemon.name)} was introduced in ${generationLabel(
+      pokemon.introducedGeneration
+    )} and is not available in Gen ${GENERATION_ROMAN[generation] ?? generation}.`;
+    clearGenerationToastTimers();
+    setGenerationToast({ message, exiting: false });
+
+    generationToastAutoHideTimeoutRef.current = window.setTimeout(() => {
+      dismissGenerationToast(message);
+    }, TOAST_AUTO_HIDE_MS);
+
+    return () => {
+      clearGenerationToastTimers();
+    };
+  }, [generation, pokemon]);
+
+  useEffect(() => {
+    return () => {
+      clearGenerationToastTimers();
+    };
+  }, []);
+
   return (
     <div className="app-shell pokemon-shell">
       <Header showSearch />
 
       <main className="page-content pokemon-page">
-        {isLoading ? <section className="status-panel">Loading Pokemon data...</section> : null}
+        {isLoading ? <PokemonPageSkeleton /> : null}
         {!isLoading && error ? <section className="status-panel status-error">{error}</section> : null}
 
         {!isLoading && !error && pokemon ? (
           <>
-            {!pokemon.isAvailableInGeneration ? (
-              <section className="generation-warning">
-                {formatPokemonName(pokemon.name)} was introduced in {generationLabel(pokemon.introducedGeneration)} and is not
-                available in Gen {GENERATION_ROMAN[generation] ?? generation}.
-              </section>
-            ) : null}
-
             <section className="bento-grid">
               <BentoCard title="Pokemon" className="card-summary" subtitle={`#${pokemon.id}`}>
                 <div className="summary-card">
@@ -391,6 +583,20 @@ export function PokemonPage() {
           </>
         ) : null}
       </main>
+
+      {generationToast ? (
+        <button
+          type="button"
+          className={`generation-toast ${generationToast.exiting ? "is-exiting" : ""}`}
+          onClick={() => dismissGenerationToast()}
+          aria-live="polite"
+        >
+          <span className="generation-toast-close" aria-hidden="true">
+            x
+          </span>
+          <span className="generation-toast-text">{generationToast.message}</span>
+        </button>
+      ) : null}
 
       {abilityTooltip && typeof document !== "undefined"
         ? createPortal(

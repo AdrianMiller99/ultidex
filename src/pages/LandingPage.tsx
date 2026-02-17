@@ -9,7 +9,7 @@ import { StatBars } from "../components/StatBars";
 import { TypePills } from "../components/TypePills";
 import { useAppContext } from "../context/AppContext";
 import type { PokemonSourceData } from "../types/pokemon";
-import { formatPokemonName, normalizePokemonInput, titleCase } from "../utils/format";
+import { formatPokemonName, titleCase } from "../utils/format";
 import { calculateTypeEffectiveness } from "../utils/typeEffectiveness";
 
 export function LandingPage() {
@@ -21,6 +21,7 @@ export function LandingPage() {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [showShinyPreview, setShowShinyPreview] = useState(false);
   const [previewMoveMode, setPreviewMoveMode] = useState<"level-up" | "machine">("level-up");
+  const [searchQuery, setSearchQuery] = useState("");
   const [abilityTooltip, setAbilityTooltip] = useState<{
     text: string;
     top: number;
@@ -114,19 +115,21 @@ export function LandingPage() {
               action="#"
               onSubmit={(event) => {
                 event.preventDefault();
-                const data = new FormData(event.currentTarget);
-                const query = normalizePokemonInput(String(data.get("pokemon") ?? ""));
-                if (!query) {
+                if (!searchQuery.trim()) {
                   return;
                 }
-                navigate(`/pokemon/${encodeURIComponent(query)}`);
+                navigate(`/search/${encodeURIComponent(searchQuery.trim())}`, {
+                  state: { preferredSkeleton: "lookup" as const },
+                });
               }}
             >
               <input
-                name="pokemon"
+                name="query"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
                 autoComplete="off"
-                placeholder="Search Pokemon"
-                aria-label="Pokemon search"
+                placeholder="Search Pokemon, Attack, or Ability"
+                aria-label="Search query"
               />
               <button type="submit">Search</button>
             </form>

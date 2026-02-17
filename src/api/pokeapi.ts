@@ -1,13 +1,20 @@
-import { generationNameToNumber, VERSION_GROUPS_BY_GENERATION } from "../constants/pokemon";
+import { GENERATIONS, generationNameToNumber, VERSION_GROUPS_BY_GENERATION } from "../constants/pokemon";
 import type {
+  AbilityEffectChange,
+  AbilitySearchResult,
   AbilityEntry,
   EvolutionNode,
+  MovePastValue,
+  MoveSearchResult,
   PokemonGenerationData,
   PokemonSourceData,
 } from "../types/pokemon";
+import { canonicalizePokemonIdentifier } from "../utils/format";
 
 const API_BASE = "https://pokeapi.co/api/v2";
 const SPECIES_NAMES_CSV_URL = "https://raw.githubusercontent.com/PokeAPI/pokeapi/master/data/v2/csv/pokemon_species_names.csv";
+const MOVE_NAMES_CSV_URL = "https://raw.githubusercontent.com/PokeAPI/pokeapi/master/data/v2/csv/move_names.csv";
+const ABILITY_NAMES_CSV_URL = "https://raw.githubusercontent.com/PokeAPI/pokeapi/master/data/v2/csv/ability_names.csv";
 
 interface NamedAPIResource {
   name: string;
@@ -51,20 +58,49 @@ interface RawSpeciesResponse {
 }
 
 interface RawAbilityResponse {
+  name: string;
   generation: NamedAPIResource;
   effect_entries: Array<{
     effect: string;
     short_effect: string;
     language: NamedAPIResource;
   }>;
+  effect_changes: Array<{
+    effect_entries: Array<{
+      effect: string;
+      short_effect: string;
+      language: NamedAPIResource;
+    }>;
+    version_group: NamedAPIResource;
+  }>;
 }
 
 interface RawMoveResponse {
+  name: string;
   power: number | null;
   accuracy: number | null;
   pp: number | null;
+  effect_chance?: number | null;
   damage_class: NamedAPIResource;
   type: NamedAPIResource;
+  effect_entries?: Array<{
+    effect: string;
+    short_effect: string;
+    language: NamedAPIResource;
+  }>;
+  past_values?: Array<{
+    accuracy: number | null;
+    effect_chance: number | null;
+    effect_entries: Array<{
+      effect: string;
+      short_effect: string;
+      language: NamedAPIResource;
+    }>;
+    power: number | null;
+    pp: number | null;
+    type: NamedAPIResource | null;
+    version_group: NamedAPIResource;
+  }>;
 }
 
 interface RawEvolutionChainResponse {
@@ -96,6 +132,7 @@ interface MoveMetadata {
   power: number | null;
   accuracy: number | null;
   pp: number | null;
+  pastValues: MovePastValue[];
 }
 
 interface SpeciesEvolutionInfo {
@@ -107,14 +144,30 @@ const moveMetadataCache = new Map<string, MoveMetadata>();
 const localizedNameToSpeciesIds = new Map<string, number[]>();
 const normalizedLocalizedNameToSpeciesIds = new Map<string, number[]>();
 let localizedNameIndexPromise: Promise<void> | null = null;
+const localizedMoveNameToMoveIds = new Map<string, number[]>();
+const normalizedLocalizedMoveNameToMoveIds = new Map<string, number[]>();
+let localizedMoveNameIndexPromise: Promise<void> | null = null;
+const localizedAbilityNameToAbilityIds = new Map<string, number[]>();
+const normalizedLocalizedAbilityNameToAbilityIds = new Map<string, number[]>();
+let localizedAbilityNameIndexPromise: Promise<void> | null = null;
+const EXCLUDED_LOCALIZED_NAME_LANGUAGE_IDS = new Set([2]);
+const LEGACY_SPECIAL_TYPES = new Set(["fire", "water", "grass", "electric", "ice", "psychic", "dragon", "dark"]);
 
-async function fetchJson<T>(pathOrUrl: string): Promise<T> {
+const VERSION_GROUP_ORDER = GENERATIONS.flatMap((generation) => generation.versionGroups).reduce(
+  (acc, versionGroup, index) => {
+    acc.set(versionGroup, index);
+    return acc;
+  },
+  new Map<string, number>()
+);
+
+async function fetchJson<T>(pathOrUrl: string, notFoundMessage = "Pokemon not found."): Promise<T> {
   const url = pathOrUrl.startsWith("http") ? pathOrUrl : `${API_BASE}${pathOrUrl}`;
   const response = await fetch(url);
 
   if (!response.ok) {
     if (response.status === 404) {
-      throw new Error("Pokemon not found.");
+      throw new Error(notFoundMessage);
     }
     throw new Error("Could not load data from PokeAPI.");
   }
@@ -154,7 +207,7 @@ function parseCsvLine(line: string): string[] {
   return fields;
 }
 
-function normalizeLocalizedPokemonName(value: string): string {
+function normalizeLocalizedName(value: string): string {
   return value
     .trim()
     .toLowerCase()
@@ -165,54 +218,67 @@ function normalizeLocalizedPokemonName(value: string): string {
     .replace(/[^\p{L}\p{N}]+/gu, "");
 }
 
-function addSpeciesIdToAliasMap(map: Map<string, number[]>, alias: string, speciesId: number): void {
+function addLocalizedIdToAliasMap(map: Map<string, number[]>, alias: string, id: number): void {
   if (!alias) {
     return;
   }
 
   const existing = map.get(alias);
   if (!existing) {
-    map.set(alias, [speciesId]);
+    map.set(alias, [id]);
     return;
   }
 
-  if (!existing.includes(speciesId)) {
-    existing.push(speciesId);
+  if (!existing.includes(id)) {
+    existing.push(id);
   }
 }
 
-async function ensureLocalizedNameIndex(): Promise<void> {
+async function loadLocalizedIdIndex(
+  csvUrl: string,
+  idToAliasMap: Map<string, number[]>,
+  normalizedAliasToIdMap: Map<string, number[]>
+): Promise<void> {
+  const response = await fetch(csvUrl);
+  if (!response.ok) {
+    throw new Error("Could not load multilingual names.");
+  }
+
+  const csv = await response.text();
+  const lines = csv.split(/\r?\n/).filter((line) => line.trim().length > 0);
+
+  for (let index = 1; index < lines.length; index += 1) {
+    const fields = parseCsvLine(lines[index]);
+    if (fields.length < 3) {
+      continue;
+    }
+
+    const entityId = Number(fields[0]);
+    const languageId = Number(fields[1]);
+    const localizedName = fields[2]?.trim();
+
+    if (!Number.isFinite(entityId) || !Number.isFinite(languageId) || !localizedName) {
+      continue;
+    }
+
+    if (EXCLUDED_LOCALIZED_NAME_LANGUAGE_IDS.has(languageId)) {
+      continue;
+    }
+
+    const lowerAlias = localizedName.toLowerCase();
+    addLocalizedIdToAliasMap(idToAliasMap, lowerAlias, entityId);
+    addLocalizedIdToAliasMap(normalizedAliasToIdMap, normalizeLocalizedName(localizedName), entityId);
+  }
+}
+
+async function ensureLocalizedPokemonNameIndex(): Promise<void> {
   if (localizedNameToSpeciesIds.size > 0 || normalizedLocalizedNameToSpeciesIds.size > 0) {
     return;
   }
 
   if (!localizedNameIndexPromise) {
     localizedNameIndexPromise = (async () => {
-      const response = await fetch(SPECIES_NAMES_CSV_URL);
-      if (!response.ok) {
-        throw new Error("Could not load multilingual Pokemon names.");
-      }
-
-      const csv = await response.text();
-      const lines = csv.split(/\r?\n/).filter((line) => line.trim().length > 0);
-
-      for (let index = 1; index < lines.length; index += 1) {
-        const fields = parseCsvLine(lines[index]);
-        if (fields.length < 3) {
-          continue;
-        }
-
-        const speciesId = Number(fields[0]);
-        const localizedName = fields[2]?.trim();
-
-        if (!Number.isFinite(speciesId) || !localizedName) {
-          continue;
-        }
-
-        const lowerAlias = localizedName.toLowerCase();
-        addSpeciesIdToAliasMap(localizedNameToSpeciesIds, lowerAlias, speciesId);
-        addSpeciesIdToAliasMap(normalizedLocalizedNameToSpeciesIds, normalizeLocalizedPokemonName(localizedName), speciesId);
-      }
+      await loadLocalizedIdIndex(SPECIES_NAMES_CSV_URL, localizedNameToSpeciesIds, normalizedLocalizedNameToSpeciesIds);
     })();
   }
 
@@ -225,15 +291,91 @@ async function resolveSpeciesIdFromLocalizedName(query: string): Promise<number 
     return null;
   }
 
-  await ensureLocalizedNameIndex();
+  await ensureLocalizedPokemonNameIndex();
 
   const direct = localizedNameToSpeciesIds.get(trimmed.toLowerCase());
   if (direct && direct.length > 0) {
     return Math.min(...direct);
   }
 
-  const normalized = normalizeLocalizedPokemonName(trimmed);
+  const normalized = normalizeLocalizedName(trimmed);
   const normalizedMatch = normalizedLocalizedNameToSpeciesIds.get(normalized);
+  if (normalizedMatch && normalizedMatch.length > 0) {
+    return Math.min(...normalizedMatch);
+  }
+
+  return null;
+}
+
+async function ensureLocalizedMoveNameIndex(): Promise<void> {
+  if (localizedMoveNameToMoveIds.size > 0 || normalizedLocalizedMoveNameToMoveIds.size > 0) {
+    return;
+  }
+
+  if (!localizedMoveNameIndexPromise) {
+    localizedMoveNameIndexPromise = (async () => {
+      await loadLocalizedIdIndex(MOVE_NAMES_CSV_URL, localizedMoveNameToMoveIds, normalizedLocalizedMoveNameToMoveIds);
+    })();
+  }
+
+  await localizedMoveNameIndexPromise;
+}
+
+async function resolveMoveIdFromLocalizedName(query: string): Promise<number | null> {
+  const trimmed = query.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  await ensureLocalizedMoveNameIndex();
+
+  const direct = localizedMoveNameToMoveIds.get(trimmed.toLowerCase());
+  if (direct && direct.length > 0) {
+    return Math.min(...direct);
+  }
+
+  const normalized = normalizeLocalizedName(trimmed);
+  const normalizedMatch = normalizedLocalizedMoveNameToMoveIds.get(normalized);
+  if (normalizedMatch && normalizedMatch.length > 0) {
+    return Math.min(...normalizedMatch);
+  }
+
+  return null;
+}
+
+async function ensureLocalizedAbilityNameIndex(): Promise<void> {
+  if (localizedAbilityNameToAbilityIds.size > 0 || normalizedLocalizedAbilityNameToAbilityIds.size > 0) {
+    return;
+  }
+
+  if (!localizedAbilityNameIndexPromise) {
+    localizedAbilityNameIndexPromise = (async () => {
+      await loadLocalizedIdIndex(
+        ABILITY_NAMES_CSV_URL,
+        localizedAbilityNameToAbilityIds,
+        normalizedLocalizedAbilityNameToAbilityIds
+      );
+    })();
+  }
+
+  await localizedAbilityNameIndexPromise;
+}
+
+async function resolveAbilityIdFromLocalizedName(query: string): Promise<number | null> {
+  const trimmed = query.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  await ensureLocalizedAbilityNameIndex();
+
+  const direct = localizedAbilityNameToAbilityIds.get(trimmed.toLowerCase());
+  if (direct && direct.length > 0) {
+    return Math.min(...direct);
+  }
+
+  const normalized = normalizeLocalizedName(trimmed);
+  const normalizedMatch = normalizedLocalizedAbilityNameToAbilityIds.get(normalized);
   if (normalizedMatch && normalizedMatch.length > 0) {
     return Math.min(...normalizedMatch);
   }
@@ -245,11 +387,239 @@ function isPokemonNotFoundError(error: unknown): boolean {
   return error instanceof Error && error.message === "Pokemon not found.";
 }
 
+function isMoveNotFoundError(error: unknown): boolean {
+  return error instanceof Error && error.message === "Attack not found.";
+}
+
+function isAbilityNotFoundError(error: unknown): boolean {
+  return error instanceof Error && error.message === "Ability not found.";
+}
+
+function getVersionGroupOrder(versionGroup: string): number | null {
+  const order = VERSION_GROUP_ORDER.get(versionGroup);
+  return typeof order === "number" ? order : null;
+}
+
+function getRepresentativeVersionGroup(generation: number): string | null {
+  const groups = VERSION_GROUPS_BY_GENERATION[generation];
+  if (!groups || groups.length === 0) {
+    return null;
+  }
+  return groups[groups.length - 1] ?? null;
+}
+
+function getRepresentativeVersionGroupOrder(generation: number): number | null {
+  const representativeVersionGroup = getRepresentativeVersionGroup(generation);
+  if (!representativeVersionGroup) {
+    return null;
+  }
+  return getVersionGroupOrder(representativeVersionGroup);
+}
+
+function resolveMoveCategoryForGeneration(category: string, type: string, generation: number): string {
+  if (category === "status") {
+    return "status";
+  }
+
+  if (generation <= 3) {
+    return LEGACY_SPECIAL_TYPES.has(type) ? "special" : "physical";
+  }
+
+  return category;
+}
+
 function resolveArtwork(pokemon: RawPokemonResponse): { image: string; shinyImage: string } {
   const official = pokemon.sprites.other?.["official-artwork"];
   const image = official?.front_default ?? pokemon.sprites.front_default ?? "";
   const shinyImage = official?.front_shiny ?? pokemon.sprites.front_shiny ?? image;
   return { image, shinyImage };
+}
+
+function extractEnglishDescription(
+  effectEntries: Array<{
+    effect: string;
+    short_effect: string;
+    language: NamedAPIResource;
+  }>,
+  effectChance?: number | null
+): string {
+  const englishEffect = effectEntries.find((entry) => entry.language.name === "en");
+  const rawDescription = englishEffect?.short_effect ?? englishEffect?.effect;
+  if (!rawDescription) {
+    return "No description available.";
+  }
+
+  const compactDescription = rawDescription.replace(/\s+/g, " ").trim();
+  if (effectChance === null || effectChance === undefined) {
+    return compactDescription.replace(/\$effect_chance/g, "");
+  }
+
+  return compactDescription.replace(/\$effect_chance/g, String(effectChance));
+}
+
+function extractEnglishDescriptionOrNull(
+  effectEntries: Array<{
+    effect: string;
+    short_effect: string;
+    language: NamedAPIResource;
+  }>,
+  effectChance?: number | null
+): string | null {
+  const englishEffect = effectEntries.find((entry) => entry.language.name === "en");
+  const rawDescription = englishEffect?.short_effect ?? englishEffect?.effect;
+  if (!rawDescription) {
+    return null;
+  }
+
+  return extractEnglishDescription(effectEntries, effectChance);
+}
+
+function resolveMoveValuesForGeneration(
+  currentValues: {
+    type: string;
+    category: string;
+    power: number | null;
+    accuracy: number | null;
+    pp: number | null;
+  },
+  pastValues: MovePastValue[],
+  generation: number
+): {
+  type: string;
+  category: string;
+  power: number | null;
+  accuracy: number | null;
+  pp: number | null;
+} {
+  const targetOrder = getRepresentativeVersionGroupOrder(generation);
+  if (targetOrder === null || pastValues.length === 0) {
+    return {
+      ...currentValues,
+      category: resolveMoveCategoryForGeneration(currentValues.category, currentValues.type, generation),
+    };
+  }
+
+  const resolved = { ...currentValues };
+  const sortedPastValues = [...pastValues].sort((a, b) => {
+    const orderA = getVersionGroupOrder(a.versionGroup);
+    const orderB = getVersionGroupOrder(b.versionGroup);
+    if (orderA === null && orderB === null) {
+      return 0;
+    }
+    if (orderA === null) {
+      return 1;
+    }
+    if (orderB === null) {
+      return -1;
+    }
+    return orderB - orderA;
+  });
+
+  for (const pastValue of sortedPastValues) {
+    const changeOrder = getVersionGroupOrder(pastValue.versionGroup);
+    if (changeOrder === null || targetOrder >= changeOrder) {
+      continue;
+    }
+
+    if (pastValue.type) {
+      resolved.type = pastValue.type;
+    }
+    if (pastValue.power !== null) {
+      resolved.power = pastValue.power;
+    }
+    if (pastValue.accuracy !== null) {
+      resolved.accuracy = pastValue.accuracy;
+    }
+    if (pastValue.pp !== null) {
+      resolved.pp = pastValue.pp;
+    }
+  }
+
+  resolved.category = resolveMoveCategoryForGeneration(resolved.category, resolved.type, generation);
+  return resolved;
+}
+
+function resolveMoveDescriptionForGeneration(moveData: RawMoveResponse, generation: number): string {
+  const targetOrder = getRepresentativeVersionGroupOrder(generation);
+  const currentDescription = moveData.effect_entries
+    ? extractEnglishDescription(moveData.effect_entries, moveData.effect_chance)
+    : "No description available.";
+
+  if (targetOrder === null || !moveData.past_values || moveData.past_values.length === 0) {
+    return currentDescription;
+  }
+
+  let description = currentDescription;
+  const sortedPastValues = [...moveData.past_values].sort((a, b) => {
+    const orderA = getVersionGroupOrder(a.version_group.name);
+    const orderB = getVersionGroupOrder(b.version_group.name);
+    if (orderA === null && orderB === null) {
+      return 0;
+    }
+    if (orderA === null) {
+      return 1;
+    }
+    if (orderB === null) {
+      return -1;
+    }
+    return orderB - orderA;
+  });
+
+  for (const pastValue of sortedPastValues) {
+    const changeOrder = getVersionGroupOrder(pastValue.version_group.name);
+    if (changeOrder === null || targetOrder >= changeOrder) {
+      continue;
+    }
+
+    if (pastValue.effect_entries && pastValue.effect_entries.length > 0) {
+      const changeDescription = extractEnglishDescriptionOrNull(
+        pastValue.effect_entries,
+        pastValue.effect_chance === null ? undefined : pastValue.effect_chance
+      );
+      if (changeDescription) {
+        description = changeDescription;
+      }
+    }
+  }
+
+  return description;
+}
+
+function resolveAbilityDescriptionForGeneration(
+  currentDescription: string,
+  effectChanges: AbilityEffectChange[],
+  generation: number
+): string {
+  const targetOrder = getRepresentativeVersionGroupOrder(generation);
+  if (targetOrder === null || effectChanges.length === 0) {
+    return currentDescription;
+  }
+
+  let description = currentDescription;
+  const sortedChanges = [...effectChanges].sort((a, b) => {
+    const orderA = getVersionGroupOrder(a.versionGroup);
+    const orderB = getVersionGroupOrder(b.versionGroup);
+    if (orderA === null && orderB === null) {
+      return 0;
+    }
+    if (orderA === null) {
+      return 1;
+    }
+    if (orderB === null) {
+      return -1;
+    }
+    return orderB - orderA;
+  });
+
+  for (const change of sortedChanges) {
+    const changeOrder = getVersionGroupOrder(change.versionGroup);
+    if (changeOrder === null || targetOrder >= changeOrder || !change.description) {
+      continue;
+    }
+    description = change.description;
+  }
+
+  return description;
 }
 
 function describeEvolution(detail: RawEvolutionDetail | undefined): string | null {
@@ -355,17 +725,26 @@ async function loadAbilities(
   return Promise.all(
     abilities.map(async (ability) => {
       const abilityData = await fetchJson<RawAbilityResponse>(ability.ability.url);
-      const englishEffect = abilityData.effect_entries.find((entry) => entry.language.name === "en");
-      const description =
-        englishEffect?.short_effect?.replace(/\s+/g, " ").trim() ??
-        englishEffect?.effect?.replace(/\s+/g, " ").trim() ??
-        "No description available.";
+      const description = extractEnglishDescription(abilityData.effect_entries);
+      const effectChanges: AbilityEffectChange[] = abilityData.effect_changes
+        .map((change) => {
+          const changeDescription = extractEnglishDescriptionOrNull(change.effect_entries);
+          if (!changeDescription) {
+            return null;
+          }
+          return {
+            versionGroup: change.version_group.name,
+            description: changeDescription,
+          };
+        })
+        .filter((change): change is AbilityEffectChange => change !== null);
 
       return {
         name: ability.ability.name,
         hidden: ability.is_hidden,
         introducedIn: generationNameToNumber(abilityData.generation.name),
         description,
+        effectChanges,
       };
     })
   );
@@ -384,6 +763,13 @@ async function loadMoveMetadata(move: NamedAPIResource): Promise<MoveMetadata> {
     power: moveData.power,
     accuracy: moveData.accuracy,
     pp: moveData.pp,
+    pastValues: (moveData.past_values ?? []).map((pastValue) => ({
+      versionGroup: pastValue.version_group.name,
+      type: pastValue.type?.name ?? null,
+      power: pastValue.power,
+      accuracy: pastValue.accuracy,
+      pp: pastValue.pp,
+    })),
   };
 
   moveMetadataCache.set(move.name, metadata);
@@ -442,6 +828,7 @@ async function loadPokemonSourceByIdentifier(nameOrId: string): Promise<PokemonS
       power: movesMetadata[entry.move.name]?.power ?? null,
       accuracy: movesMetadata[entry.move.name]?.accuracy ?? null,
       pp: movesMetadata[entry.move.name]?.pp ?? null,
+      pastValues: movesMetadata[entry.move.name]?.pastValues ?? [],
     }))
     .filter((entry) => entry.details.length > 0);
 
@@ -490,6 +877,182 @@ export async function loadPokemonSource(nameOrId: string): Promise<PokemonSource
   }
 }
 
+function normalizeNamedResourceInput(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, "-");
+}
+
+async function loadMoveByIdentifier(nameOrId: string): Promise<RawMoveResponse> {
+  const canonicalIdentifier = normalizeNamedResourceInput(nameOrId);
+
+  try {
+    return await fetchJson<RawMoveResponse>(`/move/${canonicalIdentifier}`, "Attack not found.");
+  } catch (error) {
+    if (!isMoveNotFoundError(error)) {
+      throw error;
+    }
+  }
+
+  const resolvedMoveId = await resolveMoveIdFromLocalizedName(nameOrId);
+  if (!resolvedMoveId || String(resolvedMoveId) === canonicalIdentifier) {
+    throw new Error("Attack not found.");
+  }
+
+  return fetchJson<RawMoveResponse>(`/move/${resolvedMoveId}`, "Attack not found.");
+}
+
+async function loadAbilityByIdentifier(nameOrId: string): Promise<RawAbilityResponse> {
+  const canonicalIdentifier = normalizeNamedResourceInput(nameOrId);
+
+  try {
+    return await fetchJson<RawAbilityResponse>(`/ability/${canonicalIdentifier}`, "Ability not found.");
+  } catch (error) {
+    if (!isAbilityNotFoundError(error)) {
+      throw error;
+    }
+  }
+
+  const resolvedAbilityId = await resolveAbilityIdFromLocalizedName(nameOrId);
+  if (!resolvedAbilityId || String(resolvedAbilityId) === canonicalIdentifier) {
+    throw new Error("Ability not found.");
+  }
+
+  return fetchJson<RawAbilityResponse>(`/ability/${resolvedAbilityId}`, "Ability not found.");
+}
+
+async function resolvePokemonIdentifierForSearch(nameOrId: string): Promise<string | null> {
+  const canonicalIdentifier = canonicalizePokemonIdentifier(nameOrId);
+  if (!canonicalIdentifier) {
+    return null;
+  }
+
+  try {
+    const pokemon = await fetchJson<RawPokemonResponse>(`/pokemon/${canonicalIdentifier}`, "Pokemon not found.");
+    return pokemon.name;
+  } catch (error) {
+    if (!isPokemonNotFoundError(error)) {
+      throw error;
+    }
+  }
+
+  const resolvedSpeciesId = await resolveSpeciesIdFromLocalizedName(nameOrId);
+  if (!resolvedSpeciesId) {
+    return null;
+  }
+
+  const pokemon = await fetchJson<RawPokemonResponse>(`/pokemon/${resolvedSpeciesId}`, "Pokemon not found.");
+  return pokemon.name;
+}
+
+async function resolveMoveIdentifierForSearch(name: string): Promise<string | null> {
+  if (!name.trim()) {
+    return null;
+  }
+
+  try {
+    const moveData = await loadMoveByIdentifier(name);
+    return moveData.name;
+  } catch (error) {
+    if (!isMoveNotFoundError(error)) {
+      throw error;
+    }
+    return null;
+  }
+}
+
+async function resolveAbilityIdentifierForSearch(name: string): Promise<string | null> {
+  if (!name.trim()) {
+    return null;
+  }
+
+  try {
+    const abilityData = await loadAbilityByIdentifier(name);
+    return abilityData.name;
+  } catch (error) {
+    if (!isAbilityNotFoundError(error)) {
+      throw error;
+    }
+    return null;
+  }
+}
+
+export async function resolveSearchPath(name: string): Promise<string | null> {
+  const trimmed = name.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const pokemonName = await resolvePokemonIdentifierForSearch(trimmed);
+  if (pokemonName) {
+    return `/pokemon/${encodeURIComponent(pokemonName)}`;
+  }
+
+  const moveName = await resolveMoveIdentifierForSearch(trimmed);
+  if (moveName) {
+    return `/moves/${encodeURIComponent(moveName)}`;
+  }
+
+  const abilityName = await resolveAbilityIdentifierForSearch(trimmed);
+  if (abilityName) {
+    return `/abilities/${encodeURIComponent(abilityName)}`;
+  }
+
+  return null;
+}
+
+export async function loadMoveSearchResult(name: string, generation: number): Promise<MoveSearchResult> {
+  const moveData = await loadMoveByIdentifier(name);
+  const values = resolveMoveValuesForGeneration(
+    {
+      type: moveData.type.name,
+      category: moveData.damage_class.name,
+      power: moveData.power,
+      accuracy: moveData.accuracy,
+      pp: moveData.pp,
+    },
+    (moveData.past_values ?? []).map((pastValue) => ({
+      versionGroup: pastValue.version_group.name,
+      type: pastValue.type?.name ?? null,
+      power: pastValue.power,
+      accuracy: pastValue.accuracy,
+      pp: pastValue.pp,
+    })),
+    generation
+  );
+
+  return {
+    kind: "move",
+    name: moveData.name,
+    description: resolveMoveDescriptionForGeneration(moveData, generation),
+    power: values.power,
+    accuracy: values.accuracy,
+    pp: values.pp,
+    category: values.category,
+  };
+}
+
+export async function loadAbilitySearchResult(name: string, generation: number): Promise<AbilitySearchResult> {
+  const abilityData = await loadAbilityByIdentifier(name);
+  const currentDescription = extractEnglishDescription(abilityData.effect_entries);
+  const effectChanges: AbilityEffectChange[] = abilityData.effect_changes
+    .map((change) => {
+      const changeDescription = extractEnglishDescriptionOrNull(change.effect_entries);
+      if (!changeDescription) {
+        return null;
+      }
+      return {
+        versionGroup: change.version_group.name,
+        description: changeDescription,
+      };
+    })
+    .filter((change): change is AbilityEffectChange => change !== null);
+
+  return {
+    kind: "ability",
+    name: abilityData.name,
+    description: resolveAbilityDescriptionForGeneration(currentDescription, effectChanges, generation),
+  };
+}
+
 export function derivePokemonForGeneration(
   source: PokemonSourceData,
   generation: number,
@@ -521,15 +1084,26 @@ export function derivePokemonForGeneration(
 
       const minLevel = matchedDetails.reduce((lowest, detail) => Math.min(lowest, detail.level), Number.MAX_SAFE_INTEGER);
       const levelValue = minLevel === Number.MAX_SAFE_INTEGER || minLevel === 0 ? null : minLevel;
+      const resolvedMoveValues = resolveMoveValuesForGeneration(
+        {
+          type: move.type,
+          category: move.category,
+          power: move.power,
+          accuracy: move.accuracy,
+          pp: move.pp,
+        },
+        move.pastValues,
+        generation
+      );
 
       return {
         name: move.name,
         level: levelValue,
-        type: move.type,
-        category: move.category,
-        power: move.power,
-        accuracy: move.accuracy,
-        pp: move.pp,
+        type: resolvedMoveValues.type,
+        category: resolvedMoveValues.category,
+        power: resolvedMoveValues.power,
+        accuracy: resolvedMoveValues.accuracy,
+        pp: resolvedMoveValues.pp,
       };
     })
     .filter((move): move is NonNullable<typeof move> => move !== null)
@@ -546,7 +1120,12 @@ export function derivePokemonForGeneration(
       return a.name.localeCompare(b.name);
     });
 
-  const abilities = source.abilities.filter((ability) => ability.introducedIn <= generation);
+  const abilities = source.abilities
+    .filter((ability) => ability.introducedIn <= generation)
+    .map((ability) => ({
+      ...ability,
+      description: resolveAbilityDescriptionForGeneration(ability.description, ability.effectChanges, generation),
+    }));
 
   const evolutionRoot = source.evolutionRoot ? filterEvolutionTree(source.evolutionRoot, generation) : null;
 

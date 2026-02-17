@@ -1,7 +1,7 @@
+import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { GENERATIONS } from "../constants/pokemon";
 import { useAppContext } from "../context/AppContext";
-import { normalizePokemonInput } from "../utils/format";
 
 interface HeaderProps {
   showSearch?: boolean;
@@ -11,16 +11,38 @@ export function Header({ showSearch = false }: HeaderProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const { theme, toggleTheme, generation, setGeneration } = useAppContext();
+  const locationState = location.state as { preferredSkeleton?: "pokemon" | "lookup" } | null;
 
-  const pathParts = location.pathname.split("/").filter(Boolean);
-  const pokemonFromPath = pathParts[0] === "pokemon" ? decodeURIComponent(pathParts[1] ?? "") : "";
+  const queryFromPath = useMemo(() => {
+    const pathParts = location.pathname.split("/").filter(Boolean);
+    if (pathParts.length < 2) {
+      return "";
+    }
+
+    if (pathParts[0] === "pokemon" || pathParts[0] === "moves" || pathParts[0] === "abilities" || pathParts[0] === "search") {
+      return decodeURIComponent(pathParts[1] ?? "");
+    }
+
+    return "";
+  }, [location.pathname]);
+  const [query, setQuery] = useState(queryFromPath);
+
+  useEffect(() => {
+    setQuery(queryFromPath);
+  }, [queryFromPath]);
 
   function submitSearch(formData: FormData) {
-    const query = normalizePokemonInput(String(formData.get("pokemon") ?? ""));
-    if (!query) {
+    const rawQuery = String(formData.get("query") ?? "");
+    if (!rawQuery.trim()) {
       return;
     }
-    navigate(`/pokemon/${encodeURIComponent(query)}`);
+
+    const preferredSkeleton: "pokemon" | "lookup" =
+      location.pathname.startsWith("/pokemon") || locationState?.preferredSkeleton === "pokemon" ? "pokemon" : "lookup";
+
+    navigate(`/search/${encodeURIComponent(rawQuery.trim())}`, {
+      state: { preferredSkeleton },
+    });
   }
 
   return (
@@ -33,22 +55,25 @@ export function Header({ showSearch = false }: HeaderProps) {
       </div>
 
       {showSearch ? (
-        <form
-          className="header-search"
-          action="#"
-          onSubmit={(event) => {
-            event.preventDefault();
-            submitSearch(new FormData(event.currentTarget));
-          }}
-        >
-          <input
-            name="pokemon"
-            defaultValue={pokemonFromPath}
-            autoComplete="off"
-            placeholder="Search Pokemon by name or ID"
-          />
-          <button type="submit">Search</button>
-        </form>
+        <div className="header-search-wrap">
+          <form
+            className="header-search"
+            action="#"
+            onSubmit={(event) => {
+              event.preventDefault();
+              submitSearch(new FormData(event.currentTarget));
+            }}
+          >
+            <input
+              name="query"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              autoComplete="off"
+              placeholder="Search Pokemon, Attack, or Ability"
+            />
+            <button type="submit">Search</button>
+          </form>
+        </div>
       ) : null}
 
       <div className="site-header-controls">

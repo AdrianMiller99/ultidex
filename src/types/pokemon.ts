@@ -9,6 +9,14 @@ export interface MoveDetail {
   versionGroup: string;
 }
 
+export interface MovePastValue {
+  versionGroup: string;
+  type: string | null;
+  power: number | null;
+  accuracy: number | null;
+  pp: number | null;
+}
+
 export interface MoveSourceEntry {
   name: string;
   details: MoveDetail[];
@@ -17,6 +25,12 @@ export interface MoveSourceEntry {
   power: number | null;
   accuracy: number | null;
   pp: number | null;
+  pastValues: MovePastValue[];
+}
+
+export interface AbilityEffectChange {
+  versionGroup: string;
+  description: string;
 }
 
 export interface AbilityEntry {
@@ -24,6 +38,7 @@ export interface AbilityEntry {
   hidden: boolean;
   introducedIn: number;
   description: string;
+  effectChanges: AbilityEffectChange[];
 }
 
 export interface AlternativeFormEntry {
@@ -77,4 +92,20 @@ export interface PokemonGenerationData {
   moves: PokemonMoveView[];
   evolutionRoot: EvolutionNode | null;
   alternativeForms: AlternativeFormEntry[];
+}
+
+export interface MoveSearchResult {
+  kind: "move";
+  name: string;
+  description: string;
+  power: number | null;
+  accuracy: number | null;
+  pp: number | null;
+  category: string;
+}
+
+export interface AbilitySearchResult {
+  kind: "ability";
+  name: string;
+  description: string;
 }
