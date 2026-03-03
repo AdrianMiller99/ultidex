@@ -5,6 +5,7 @@ node_modules/
 dist/
 build/
 coverage/
+.cache/
 
 # TypeScript cache artifacts
 *.tsbuildinfo
@@ -30,4 +31,3 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
-

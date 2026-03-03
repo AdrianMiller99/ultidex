@@ -16,8 +16,8 @@ UltiDex is a client-only, no-login, no-database Pokedex built on top of [PokeAPI
 - Clickable evolutions and forms that navigate to the corresponding Pokemon route.
 - Type matchup panel showing `0x`, `0.25x`, `0.5x`, `1x`, `2x`, `4x` damage buckets.
 - Shiny/default sprite toggle in the Pokemon summary card.
-- Ability tooltips with descriptions loaded from PokeAPI ability data.
-- Multilingual Pokemon search fallback using PokeAPI species-name CSV aliases.
+- Ability tooltips with generation-aware descriptions.
+- Multilingual Pokemon/move/ability search fallback using localized aliases.
 - Dark-first theme with light mode option, both persisted locally.
 - Desktop and mobile responsive layouts.
 
@@ -28,14 +28,15 @@ UltiDex is a client-only, no-login, no-database Pokedex built on top of [PokeAPI
 - React Router
 - Vite
 - Plain CSS (no UI framework)
-- PokeAPI REST endpoints + official PokeAPI CSV data file for localized species names
+- Build-time PokeAPI data generation script (`scripts/build-local-data.mjs`)
+- Local static JSON dataset (`public/data/*`) with optional live PokeAPI fallback
 
 ## Architecture
 
 This is a pure frontend architecture:
 
 - Presentation layer: reusable React components + page-level composition.
-- Domain/data layer: `src/api/pokeapi.ts` transforms raw PokeAPI payloads into app-specific typed models.
+- Domain/data layer: `src/api/pokeapi.ts` loads local static JSON first and falls back to live PokeAPI if local data is missing.
 - State layer: global app preferences (theme, generation) in `AppContext`, with local state per page for UI interactions.
 - Styling system: custom CSS tokens, shared card primitives, generation-safe and form-safe data rendering.
 
@@ -68,6 +69,14 @@ src/
   App.tsx
   main.tsx
   index.css
+scripts/
+  build-local-data.mjs
+public/
+  data/
+    pokemon/
+    moves/
+    abilities/
+    index/
 ```
 
 ## Data flow and modeling
@@ -75,9 +84,9 @@ src/
 The core data pipeline is intentionally explicit.
 
 1. Route/search input is normalized in `utils/format.ts`.
-2. `loadPokemonSource` in `api/pokeapi.ts` fetches base Pokemon data.
-3. Species and evolution-chain endpoints are fetched to enrich generation and evolution context.
-4. Abilities and move metadata are loaded and normalized into typed app models.
+2. `npm run build:data` pre-generates Pokemon, move, ability, and lookup JSON into `public/data`.
+3. `loadPokemonSource` in `api/pokeapi.ts` loads local JSON first.
+4. If local assets are missing, the app falls back to live PokeAPI endpoints.
 5. A generation-specific derived view is computed with `derivePokemonForGeneration`.
 6. UI renders only the derived generation-safe model, not raw API payloads.
 
@@ -102,9 +111,10 @@ Generation filtering is based on explicit version-group mappings in `constants/p
 
 ## Multilingual search
 
-If direct `/pokemon/:identifier` lookup fails, the app falls back to a localized name index built from:
+Search resolves in this order:
 
-- `pokemon_species_names.csv` in the official PokeAPI repository.
+- Local static lookup indexes (`public/data/index/*`)
+- Live PokeAPI fallback (including CSV alias fallback) when local indexes are absent
 
 Normalization includes:
 
@@ -144,8 +154,9 @@ Page-local state handles:
 
 ## Performance considerations
 
-- Move metadata is cached in-memory (`moveMetadataCache`) to avoid duplicate fetches.
-- Localized species-name index is loaded lazily and cached after first use.
+- Local-first loading removes the runtime fan-out of move/ability/species API requests.
+- Local lookup indexes are cached in-memory after first load.
+- Live PokeAPI remains as fallback to keep behavior resilient when local data is unavailable.
 - Generation derivation happens in-memory from a normalized source object instead of repeated network fetches per generation switch.
 
 ## Local development
@@ -159,6 +170,7 @@ Run:
 
 ```bash
 npm install
+npm run build:data
 npm run dev
 ```
 
@@ -167,6 +179,12 @@ Build:
 ```bash
 npm run build
 npm run preview
+```
+
+Generate a smaller local dataset for quick iteration:
+
+```bash
+npm run build:data:sample
 ```
 
 ## Routes
@@ -181,7 +199,7 @@ npm run preview
 
 - No test suite yet (unit/integration/e2e).
 - No offline cache/persistence beyond browser storage for preferences.
-- Runtime data quality depends on upstream PokeAPI correctness and availability.
+- Full local data generation can take time due PokeAPI source size; the app keeps a live fallback path for missing local assets.
 
 ## Attribution
 

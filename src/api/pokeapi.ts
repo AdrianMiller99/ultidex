@@ -140,6 +140,21 @@ interface SpeciesEvolutionInfo {
   varieties: string[];
 }
 
+interface LocalPokemonLookupIndex {
+  names: Record<string, true>;
+  idToName: Record<string, string>;
+  speciesIdToDefaultName: Record<string, string>;
+  localizedToIds: Record<string, number[]>;
+  normalizedLocalizedToIds: Record<string, number[]>;
+}
+
+interface LocalNamedResourceLookupIndex {
+  names: Record<string, true>;
+  idToName: Record<string, string>;
+  localizedToIds: Record<string, number[]>;
+  normalizedLocalizedToIds: Record<string, number[]>;
+}
+
 const moveMetadataCache = new Map<string, MoveMetadata>();
 const localizedNameToSpeciesIds = new Map<string, number[]>();
 const normalizedLocalizedNameToSpeciesIds = new Map<string, number[]>();
@@ -150,8 +165,16 @@ let localizedMoveNameIndexPromise: Promise<void> | null = null;
 const localizedAbilityNameToAbilityIds = new Map<string, number[]>();
 const normalizedLocalizedAbilityNameToAbilityIds = new Map<string, number[]>();
 let localizedAbilityNameIndexPromise: Promise<void> | null = null;
+const localJsonCache = new Map<string, Promise<unknown | null>>();
+let localPokemonLookupPromise: Promise<LocalPokemonLookupIndex | null> | null = null;
+let localMoveLookupPromise: Promise<LocalNamedResourceLookupIndex | null> | null = null;
+let localAbilityLookupPromise: Promise<LocalNamedResourceLookupIndex | null> | null = null;
 const EXCLUDED_LOCALIZED_NAME_LANGUAGE_IDS = new Set([2]);
 const LEGACY_SPECIAL_TYPES = new Set(["fire", "water", "grass", "electric", "ice", "psychic", "dragon", "dark"]);
+const LOCAL_DATA_BASE = "/data";
+const LOCAL_POKEMON_LOOKUP_PATH = `${LOCAL_DATA_BASE}/index/pokemon-lookup.json`;
+const LOCAL_MOVE_LOOKUP_PATH = `${LOCAL_DATA_BASE}/index/move-lookup.json`;
+const LOCAL_ABILITY_LOOKUP_PATH = `${LOCAL_DATA_BASE}/index/ability-lookup.json`;
 
 const VERSION_GROUP_ORDER = GENERATIONS.flatMap((generation) => generation.versionGroups).reduce(
   (acc, versionGroup, index) => {
@@ -173,6 +196,213 @@ async function fetchJson<T>(pathOrUrl: string, notFoundMessage = "Pokemon not fo
   }
 
   return (await response.json()) as T;
+}
+
+async function fetchLocalJson<T>(path: string): Promise<T | null> {
+  const cachedPromise = localJsonCache.get(path) as Promise<T | null> | undefined;
+  if (cachedPromise) {
+    return cachedPromise;
+  }
+
+  const promise = (async () => {
+    const response = await fetch(path);
+    if (response.status === 404) {
+      return null;
+    }
+
+    if (!response.ok) {
+      throw new Error("Could not load local data.");
+    }
+
+    const contentType = response.headers.get("content-type") ?? "";
+    if (!contentType.toLowerCase().includes("application/json")) {
+      return null;
+    }
+
+    try {
+      return (await response.json()) as T;
+    } catch {
+      return null;
+    }
+  })();
+
+  localJsonCache.set(path, promise as Promise<unknown | null>);
+  return promise;
+}
+
+function resolveSmallestIdFromMapRecord(map: Record<string, number[]>, key: string): number | null {
+  const ids = map[key];
+  if (!ids || ids.length === 0) {
+    return null;
+  }
+
+  return Math.min(...ids);
+}
+
+async function ensureLocalPokemonLookup(): Promise<LocalPokemonLookupIndex | null> {
+  if (!localPokemonLookupPromise) {
+    localPokemonLookupPromise = fetchLocalJson<LocalPokemonLookupIndex>(LOCAL_POKEMON_LOOKUP_PATH);
+  }
+
+  return localPokemonLookupPromise;
+}
+
+async function ensureLocalMoveLookup(): Promise<LocalNamedResourceLookupIndex | null> {
+  if (!localMoveLookupPromise) {
+    localMoveLookupPromise = fetchLocalJson<LocalNamedResourceLookupIndex>(LOCAL_MOVE_LOOKUP_PATH);
+  }
+
+  return localMoveLookupPromise;
+}
+
+async function ensureLocalAbilityLookup(): Promise<LocalNamedResourceLookupIndex | null> {
+  if (!localAbilityLookupPromise) {
+    localAbilityLookupPromise = fetchLocalJson<LocalNamedResourceLookupIndex>(LOCAL_ABILITY_LOOKUP_PATH);
+  }
+
+  return localAbilityLookupPromise;
+}
+
+function resolveNamedResourceNameFromLookup(
+  query: string,
+  canonicalIdentifier: string,
+  lookup: LocalNamedResourceLookupIndex
+): string | null {
+  if (lookup.idToName[canonicalIdentifier]) {
+    return lookup.idToName[canonicalIdentifier];
+  }
+
+  if (lookup.names[canonicalIdentifier]) {
+    return canonicalIdentifier;
+  }
+
+  const directLocalizedId = resolveSmallestIdFromMapRecord(lookup.localizedToIds, query.toLowerCase());
+  if (directLocalizedId) {
+    const resolved = lookup.idToName[String(directLocalizedId)];
+    if (resolved) {
+      return resolved;
+    }
+  }
+
+  const normalizedLocalizedId = resolveSmallestIdFromMapRecord(lookup.normalizedLocalizedToIds, normalizeLocalizedName(query));
+  if (normalizedLocalizedId) {
+    const resolved = lookup.idToName[String(normalizedLocalizedId)];
+    if (resolved) {
+      return resolved;
+    }
+  }
+
+  return null;
+}
+
+function resolvePokemonNameFromLookup(query: string, canonicalIdentifier: string, lookup: LocalPokemonLookupIndex): string | null {
+  if (lookup.idToName[canonicalIdentifier]) {
+    return lookup.idToName[canonicalIdentifier];
+  }
+
+  if (lookup.names[canonicalIdentifier]) {
+    return canonicalIdentifier;
+  }
+
+  const directLocalizedId = resolveSmallestIdFromMapRecord(lookup.localizedToIds, query.toLowerCase());
+  if (directLocalizedId) {
+    const resolved = lookup.speciesIdToDefaultName[String(directLocalizedId)];
+    if (resolved) {
+      return resolved;
+    }
+  }
+
+  const normalizedLocalizedId = resolveSmallestIdFromMapRecord(lookup.normalizedLocalizedToIds, normalizeLocalizedName(query));
+  if (normalizedLocalizedId) {
+    const resolved = lookup.speciesIdToDefaultName[String(normalizedLocalizedId)];
+    if (resolved) {
+      return resolved;
+    }
+  }
+
+  return null;
+}
+
+async function loadLocalPokemonSource(nameOrId: string): Promise<PokemonSourceData | null> {
+  const canonicalIdentifier = canonicalizePokemonIdentifier(nameOrId);
+  if (!canonicalIdentifier) {
+    return null;
+  }
+
+  if (!/^\d+$/.test(canonicalIdentifier)) {
+    const direct = await fetchLocalJson<PokemonSourceData>(
+      `${LOCAL_DATA_BASE}/pokemon/${encodeURIComponent(canonicalIdentifier)}.json`
+    );
+    if (direct) {
+      return direct;
+    }
+  }
+
+  const lookup = await ensureLocalPokemonLookup();
+  if (!lookup) {
+    return null;
+  }
+
+  const resolvedPokemonName = resolvePokemonNameFromLookup(nameOrId.trim(), canonicalIdentifier, lookup);
+  if (!resolvedPokemonName) {
+    return null;
+  }
+
+  return fetchLocalJson<PokemonSourceData>(`${LOCAL_DATA_BASE}/pokemon/${encodeURIComponent(resolvedPokemonName)}.json`);
+}
+
+async function loadLocalMoveByIdentifier(nameOrId: string): Promise<RawMoveResponse | null> {
+  const canonicalIdentifier = normalizeNamedResourceInput(nameOrId);
+  if (!canonicalIdentifier) {
+    return null;
+  }
+
+  if (!/^\d+$/.test(canonicalIdentifier)) {
+    const direct = await fetchLocalJson<RawMoveResponse>(`${LOCAL_DATA_BASE}/moves/${encodeURIComponent(canonicalIdentifier)}.json`);
+    if (direct) {
+      return direct;
+    }
+  }
+
+  const lookup = await ensureLocalMoveLookup();
+  if (!lookup) {
+    return null;
+  }
+
+  const resolvedMoveName = resolveNamedResourceNameFromLookup(nameOrId.trim(), canonicalIdentifier, lookup);
+  if (!resolvedMoveName) {
+    return null;
+  }
+
+  return fetchLocalJson<RawMoveResponse>(`${LOCAL_DATA_BASE}/moves/${encodeURIComponent(resolvedMoveName)}.json`);
+}
+
+async function loadLocalAbilityByIdentifier(nameOrId: string): Promise<RawAbilityResponse | null> {
+  const canonicalIdentifier = normalizeNamedResourceInput(nameOrId);
+  if (!canonicalIdentifier) {
+    return null;
+  }
+
+  if (!/^\d+$/.test(canonicalIdentifier)) {
+    const direct = await fetchLocalJson<RawAbilityResponse>(
+      `${LOCAL_DATA_BASE}/abilities/${encodeURIComponent(canonicalIdentifier)}.json`
+    );
+    if (direct) {
+      return direct;
+    }
+  }
+
+  const lookup = await ensureLocalAbilityLookup();
+  if (!lookup) {
+    return null;
+  }
+
+  const resolvedAbilityName = resolveNamedResourceNameFromLookup(nameOrId.trim(), canonicalIdentifier, lookup);
+  if (!resolvedAbilityName) {
+    return null;
+  }
+
+  return fetchLocalJson<RawAbilityResponse>(`${LOCAL_DATA_BASE}/abilities/${encodeURIComponent(resolvedAbilityName)}.json`);
 }
 
 function parseCsvLine(line: string): string[] {
@@ -291,6 +521,19 @@ async function resolveSpeciesIdFromLocalizedName(query: string): Promise<number 
     return null;
   }
 
+  const localLookup = await ensureLocalPokemonLookup();
+  if (localLookup) {
+    const localDirect = resolveSmallestIdFromMapRecord(localLookup.localizedToIds, trimmed.toLowerCase());
+    if (localDirect) {
+      return localDirect;
+    }
+
+    const localNormalized = resolveSmallestIdFromMapRecord(localLookup.normalizedLocalizedToIds, normalizeLocalizedName(trimmed));
+    if (localNormalized) {
+      return localNormalized;
+    }
+  }
+
   await ensureLocalizedPokemonNameIndex();
 
   const direct = localizedNameToSpeciesIds.get(trimmed.toLowerCase());
@@ -325,6 +568,19 @@ async function resolveMoveIdFromLocalizedName(query: string): Promise<number | n
   const trimmed = query.trim();
   if (!trimmed) {
     return null;
+  }
+
+  const localLookup = await ensureLocalMoveLookup();
+  if (localLookup) {
+    const localDirect = resolveSmallestIdFromMapRecord(localLookup.localizedToIds, trimmed.toLowerCase());
+    if (localDirect) {
+      return localDirect;
+    }
+
+    const localNormalized = resolveSmallestIdFromMapRecord(localLookup.normalizedLocalizedToIds, normalizeLocalizedName(trimmed));
+    if (localNormalized) {
+      return localNormalized;
+    }
   }
 
   await ensureLocalizedMoveNameIndex();
@@ -365,6 +621,19 @@ async function resolveAbilityIdFromLocalizedName(query: string): Promise<number 
   const trimmed = query.trim();
   if (!trimmed) {
     return null;
+  }
+
+  const localLookup = await ensureLocalAbilityLookup();
+  if (localLookup) {
+    const localDirect = resolveSmallestIdFromMapRecord(localLookup.localizedToIds, trimmed.toLowerCase());
+    if (localDirect) {
+      return localDirect;
+    }
+
+    const localNormalized = resolveSmallestIdFromMapRecord(localLookup.normalizedLocalizedToIds, normalizeLocalizedName(trimmed));
+    if (localNormalized) {
+      return localNormalized;
+    }
   }
 
   await ensureLocalizedAbilityNameIndex();
@@ -853,6 +1122,11 @@ async function loadPokemonSourceByIdentifier(nameOrId: string): Promise<PokemonS
 }
 
 export async function loadPokemonSource(nameOrId: string): Promise<PokemonSourceData> {
+  const localSource = await loadLocalPokemonSource(nameOrId);
+  if (localSource) {
+    return localSource;
+  }
+
   const canonicalIdentifier = nameOrId.toLowerCase();
 
   try {
@@ -882,6 +1156,11 @@ function normalizeNamedResourceInput(name: string): string {
 }
 
 async function loadMoveByIdentifier(nameOrId: string): Promise<RawMoveResponse> {
+  const localMove = await loadLocalMoveByIdentifier(nameOrId);
+  if (localMove) {
+    return localMove;
+  }
+
   const canonicalIdentifier = normalizeNamedResourceInput(nameOrId);
 
   try {
@@ -901,6 +1180,11 @@ async function loadMoveByIdentifier(nameOrId: string): Promise<RawMoveResponse> 
 }
 
 async function loadAbilityByIdentifier(nameOrId: string): Promise<RawAbilityResponse> {
+  const localAbility = await loadLocalAbilityByIdentifier(nameOrId);
+  if (localAbility) {
+    return localAbility;
+  }
+
   const canonicalIdentifier = normalizeNamedResourceInput(nameOrId);
 
   try {
@@ -925,6 +1209,14 @@ async function resolvePokemonIdentifierForSearch(nameOrId: string): Promise<stri
     return null;
   }
 
+  const localLookup = await ensureLocalPokemonLookup();
+  if (localLookup) {
+    const localName = resolvePokemonNameFromLookup(nameOrId.trim(), canonicalIdentifier, localLookup);
+    if (localName) {
+      return localName;
+    }
+  }
+
   try {
     const pokemon = await fetchJson<RawPokemonResponse>(`/pokemon/${canonicalIdentifier}`, "Pokemon not found.");
     return pokemon.name;
@@ -944,8 +1236,18 @@ async function resolvePokemonIdentifierForSearch(nameOrId: string): Promise<stri
 }
 
 async function resolveMoveIdentifierForSearch(name: string): Promise<string | null> {
-  if (!name.trim()) {
+  const trimmed = name.trim();
+  if (!trimmed) {
     return null;
+  }
+
+  const canonicalIdentifier = normalizeNamedResourceInput(trimmed);
+  const localLookup = await ensureLocalMoveLookup();
+  if (localLookup) {
+    const localMoveName = resolveNamedResourceNameFromLookup(trimmed, canonicalIdentifier, localLookup);
+    if (localMoveName) {
+      return localMoveName;
+    }
   }
 
   try {
@@ -960,8 +1262,18 @@ async function resolveMoveIdentifierForSearch(name: string): Promise<string | nu
 }
 
 async function resolveAbilityIdentifierForSearch(name: string): Promise<string | null> {
-  if (!name.trim()) {
+  const trimmed = name.trim();
+  if (!trimmed) {
     return null;
+  }
+
+  const canonicalIdentifier = normalizeNamedResourceInput(trimmed);
+  const localLookup = await ensureLocalAbilityLookup();
+  if (localLookup) {
+    const localAbilityName = resolveNamedResourceNameFromLookup(trimmed, canonicalIdentifier, localLookup);
+    if (localAbilityName) {
+      return localAbilityName;
+    }
   }
 
   try {
@@ -979,6 +1291,35 @@ export async function resolveSearchPath(name: string): Promise<string | null> {
   const trimmed = name.trim();
   if (!trimmed) {
     return null;
+  }
+
+  const [localPokemonLookup, localMoveLookup, localAbilityLookup] = await Promise.all([
+    ensureLocalPokemonLookup(),
+    ensureLocalMoveLookup(),
+    ensureLocalAbilityLookup(),
+  ]);
+  const canonicalPokemonIdentifier = canonicalizePokemonIdentifier(trimmed);
+  const canonicalNamedIdentifier = normalizeNamedResourceInput(trimmed);
+
+  if (canonicalPokemonIdentifier && localPokemonLookup) {
+    const localPokemonName = resolvePokemonNameFromLookup(trimmed, canonicalPokemonIdentifier, localPokemonLookup);
+    if (localPokemonName) {
+      return `/pokemon/${encodeURIComponent(localPokemonName)}`;
+    }
+  }
+
+  if (canonicalNamedIdentifier && localMoveLookup) {
+    const localMoveName = resolveNamedResourceNameFromLookup(trimmed, canonicalNamedIdentifier, localMoveLookup);
+    if (localMoveName) {
+      return `/moves/${encodeURIComponent(localMoveName)}`;
+    }
+  }
+
+  if (canonicalNamedIdentifier && localAbilityLookup) {
+    const localAbilityName = resolveNamedResourceNameFromLookup(trimmed, canonicalNamedIdentifier, localAbilityLookup);
+    if (localAbilityName) {
+      return `/abilities/${encodeURIComponent(localAbilityName)}`;
+    }
   }
 
   const pokemonName = await resolvePokemonIdentifierForSearch(trimmed);
@@ -1145,4 +1486,3 @@ export function countEvolutionNodes(root: EvolutionNode | null): number {
 
   return 1 + root.children.reduce((total, child) => total + countEvolutionNodes(child), 0);
 }
-
