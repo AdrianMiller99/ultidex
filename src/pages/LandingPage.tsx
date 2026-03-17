@@ -136,7 +136,6 @@ export function LandingPage() {
 
             <div className="landing-points">
               <span>No Login</span>
-              <span>No Database</span>
               <span>PokeAPI Powered</span>
             </div>
           </section>
