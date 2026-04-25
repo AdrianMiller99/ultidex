@@ -98,6 +98,7 @@ export interface MoveSearchResult {
   kind: "move";
   name: string;
   description: string;
+  type: string;
   power: number | null;
   accuracy: number | null;
   pp: number | null;

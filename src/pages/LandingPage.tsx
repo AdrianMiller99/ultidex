@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { derivePokemonForGeneration, loadPokemonSource } from "../api/pokeapi";
@@ -15,6 +15,7 @@ import { calculateTypeEffectiveness } from "../utils/typeEffectiveness";
 export function LandingPage() {
   const navigate = useNavigate();
   const { generation } = useAppContext();
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const [previewSource, setPreviewSource] = useState<PokemonSourceData | null>(null);
   const [isLoadingPreview, setIsLoadingPreview] = useState(true);
@@ -97,6 +98,31 @@ export function LandingPage() {
     hideAbilityTooltip();
   }, [previewPokemon, generation]);
 
+  useEffect(() => {
+    searchInputRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    function focusSearch(event: KeyboardEvent) {
+      const target = event.target;
+      const isEditableTarget =
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        (target instanceof HTMLElement && target.isContentEditable);
+
+      if (event.key !== "/" || isEditableTarget) {
+        return;
+      }
+
+      event.preventDefault();
+      searchInputRef.current?.focus();
+    }
+
+    window.addEventListener("keydown", focusSearch);
+    return () => window.removeEventListener("keydown", focusSearch);
+  }, []);
+
   return (
     <div className="app-shell landing-shell">
       <Header />
@@ -124,6 +150,7 @@ export function LandingPage() {
               }}
             >
               <input
+                ref={searchInputRef}
                 name="query"
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}

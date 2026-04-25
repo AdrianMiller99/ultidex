@@ -1364,6 +1364,7 @@ export async function loadMoveSearchResult(name: string, generation: number): Pr
     kind: "move",
     name: moveData.name,
     description: resolveMoveDescriptionForGeneration(moveData, generation),
+    type: values.type,
     power: values.power,
     accuracy: values.accuracy,
     pp: values.pp,

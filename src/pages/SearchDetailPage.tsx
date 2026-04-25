@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { loadAbilitySearchResult, loadMoveSearchResult } from "../api/pokeapi";
 import { Header } from "../components/Header";
+import { TypePills } from "../components/TypePills";
 import { GENERATION_ROMAN } from "../constants/pokemon";
 import { useAppContext } from "../context/AppContext";
 import type { AbilitySearchResult, MoveSearchResult } from "../types/pokemon";
@@ -104,7 +105,14 @@ export function SearchDetailPage({ kind }: SearchDetailPageProps) {
           {!isLoading && !error && detail ? (
             <article className="lookup-panel">
               <p className="lookup-kicker">{detail.kind === "move" ? "Attack" : "Ability"}</p>
-              <h1>{titleCase(detail.name)}</h1>
+              {detail.kind === "move" ? (
+                <div className="lookup-title-row">
+                  <h1>{titleCase(detail.name)}</h1>
+                  <TypePills types={[detail.type]} />
+                </div>
+              ) : (
+                <h1>{titleCase(detail.name)}</h1>
+              )}
               <p className="lookup-generation-label">Generation {GENERATION_ROMAN[generation] ?? generation}</p>
               <p className="lookup-description">{detail.description}</p>
 

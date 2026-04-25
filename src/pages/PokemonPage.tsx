@@ -152,7 +152,7 @@ export function PokemonPage() {
   const TOAST_EXIT_ANIMATION_MS = 260;
   const navigate = useNavigate();
   const { name = "" } = useParams();
-  const { generation } = useAppContext();
+  const { generation, team, addTeamPokemon } = useAppContext();
 
   const [source, setSource] = useState<PokemonSourceData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -354,6 +354,7 @@ export function PokemonPage() {
     }
     return calculateTypeEffectiveness(pokemon.types);
   }, [pokemon]);
+  const isTeamFull = team.length >= 6;
 
   useEffect(() => {
     if (!hasAlternativeForms && evolutionMode === "forms") {
@@ -417,9 +418,19 @@ export function PokemonPage() {
                   <div className="summary-meta">
                     <h3>{formatPokemonName(pokemon.name)}</h3>
                     <TypePills types={pokemon.types} />
-                    <button className="shiny-toggle" type="button" onClick={() => setShowShiny((prev) => !prev)}>
-                      {showShiny ? "Show default" : "Show shiny"}
-                    </button>
+                    <div className="summary-actions">
+                      <button className="shiny-toggle" type="button" onClick={() => setShowShiny((prev) => !prev)}>
+                        {showShiny ? "Show default" : "Show shiny"}
+                      </button>
+                      <button
+                        className="add-team-button"
+                        type="button"
+                        disabled={isTeamFull}
+                        onClick={() => addTeamPokemon({ name: pokemon.name, image: pokemon.image })}
+                      >
+                        Add to team
+                      </button>
+                    </div>
                   </div>
                 </div>
               </BentoCard>

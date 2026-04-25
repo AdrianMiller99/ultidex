@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { GENERATIONS } from "../constants/pokemon";
 import { useAppContext } from "../context/AppContext";
@@ -10,8 +10,9 @@ interface HeaderProps {
 export function Header({ showSearch = false }: HeaderProps) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { theme, toggleTheme, generation, setGeneration } = useAppContext();
+  const { theme, toggleTheme, generation, setGeneration, team, removeTeamPokemon } = useAppContext();
   const locationState = location.state as { preferredSkeleton?: "pokemon" | "lookup" } | null;
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const queryFromPath = useMemo(() => {
     const pathParts = location.pathname.split("/").filter(Boolean);
@@ -30,6 +31,31 @@ export function Header({ showSearch = false }: HeaderProps) {
   useEffect(() => {
     setQuery(queryFromPath);
   }, [queryFromPath]);
+
+  useEffect(() => {
+    if (!showSearch) {
+      return;
+    }
+
+    function focusSearch(event: KeyboardEvent) {
+      const target = event.target;
+      const isEditableTarget =
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        (target instanceof HTMLElement && target.isContentEditable);
+
+      if (event.key !== "/" || isEditableTarget) {
+        return;
+      }
+
+      event.preventDefault();
+      searchInputRef.current?.focus();
+    }
+
+    window.addEventListener("keydown", focusSearch);
+    return () => window.removeEventListener("keydown", focusSearch);
+  }, [showSearch]);
 
   function submitSearch(formData: FormData) {
     const rawQuery = String(formData.get("query") ?? "");
@@ -52,6 +78,36 @@ export function Header({ showSearch = false }: HeaderProps) {
           <img src="/pokedex_logo.svg" alt="UltiDex logo" className="brand-logo" />
           UltiDex
         </Link>
+
+        <div className="team-slots" aria-label="Pokemon team">
+          {Array.from({ length: 6 }).map((_, index) => {
+            const teamPokemon = team[index];
+
+            if (!teamPokemon) {
+              return <div key={index} className="team-slot team-slot-empty" aria-label={`Empty team slot ${index + 1}`} />;
+            }
+
+            return (
+              <div key={`${teamPokemon.name}-${index}`} className="team-slot team-slot-filled">
+                <Link
+                  to={`/pokemon/${encodeURIComponent(teamPokemon.name)}`}
+                  className="team-slot-link"
+                  aria-label={`Open ${teamPokemon.name}`}
+                >
+                  <img src={teamPokemon.image} alt="" className="team-slot-image" />
+                </Link>
+                <button
+                  type="button"
+                  className="team-slot-remove"
+                  aria-label={`Remove ${teamPokemon.name} from team`}
+                  onClick={() => removeTeamPokemon(index)}
+                >
+                  x
+                </button>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {showSearch ? (
@@ -65,6 +121,7 @@ export function Header({ showSearch = false }: HeaderProps) {
             }}
           >
             <input
+              ref={searchInputRef}
               name="query"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
